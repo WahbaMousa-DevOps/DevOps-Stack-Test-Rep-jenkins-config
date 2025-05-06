@@ -1,0 +1,233 @@
+# 🔧 Purpose: Bootstrap the entire Jenkins master/controller securely and dynamically
+# Features:
+# - Secure admin credentials (via env vars)
+# - Role-based access control (RBAC)
+# - Inbound agents (Java + .NET)
+# - Shared environment variables
+# - Backup, Monitoring, Artifact integration
+# - API token hardening
+# - Dynamic behavior based on environment (dev/test/prod)
+
+jenkins: # master node
+  systemMessage: "Jenkins CI/CD Environment - ${JENKINS_ENV} Environment" # Shows current environment (e.g., Dev, Prod) on the dashboard .
+  numExecutors: ${JENKINS_EXECUTORS}  # 0 for prod (no builds on master), 1+ for dev/test
+  mode: EXCLUSIVE  # Only build on agents — not on master
+
+  # 👤 Security Realm: Defines admin users
+  securityRealm:
+    local:
+      allowsSignup: ${JENKINS_SIGNUP}  # true in dev, false in prod (disable user self-signup)
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"  # Use env var or Vault injection
+
+  # 🔐 Authorization Strategy: Role-based access control (RBAC)
+  authorizationStrategy:
+    roleBased:
+      roles:
+        global:
+          - name: "admin"
+            description: "Jenkins administrators"
+            permissions:
+              - "Overall/Administer"
+            assignments:
+              - "admin"
+          - name: "developer"
+            description: "Developer role"
+            permissions:
+              - "Overall/Read"
+              - "Job/Build"
+              - "Job/Read"
+              - "Job/Workspace"
+              - "Job/Cancel"
+            assignments: []  # Add users dynamically later via UI or seed job
+
+  # 🛡️ CSRF Protection
+  crumbIssuer:
+    standard:
+      excludeClientIPFromCrumb: true
+
+  # 🔐 Secures remoting channel (JNLP agents)
+  remotingSecurity:
+    enabled: true
+
+  # 🌍 Shared Environment Variables, global environment variables visible to all jobs, including the master.
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: "DOCKER_REGISTRY"
+            value: "docker.io"
+          - key: "ACTIVE_ENVIRONMENT"
+            value: "${JENKINS_ENV}"  # Useful for pipeline logic/logging
+
+  # ⚙️ Agent Configuration (Static, inbound launchers)
+  nodes:
+    - permanent:
+        name: "java-agent"
+        labelString: "java docker maven gradle"
+        remoteFS: "/home/jenkins/agent"
+        numExecutors: 2
+        mode: EXCLUSIVE
+        retentionStrategy: "always"
+        launcher:
+          inbound:
+            workDirSettings:
+              disabled: false
+              workDirPath: "/home/jenkins/agent"
+              internalDir: "remoting"
+              failIfWorkDirIsMissing: false
+
+    - permanent:
+        name: "dotnet-agent"
+        labelString: "dotnet docker windows linux"
+        remoteFS: "/home/jenkins/agent"
+        numExecutors: 2
+        mode: EXCLUSIVE
+        retentionStrategy: "always"
+        launcher:
+          inbound:
+            workDirSettings:
+              disabled: false
+              workDirPath: "/home/jenkins/agent"
+              internalDir: "remoting"
+              failIfWorkDirIsMissing: false
+
+    - permanent:
+        name: "nodejs-agent"
+        labelString: "nodejs docker npm yarn"
+        remoteFS: "/home/jenkins/agent"
+        numExecutors: 2
+        mode: EXCLUSIVE
+        retentionStrategy: "always"
+        launcher:
+          inbound:
+            workDirSettings:
+              disabled: false
+              workDirPath: "/home/jenkins/agent"
+              internalDir: "remoting"
+              failIfWorkDirIsMissing: false
+
+
+# 🔐 Additional Security Controls
+security:
+  queueItemAuthenticator:
+    authenticators:
+      - global:
+          strategy: triggeringUsersAuthorizationStrategy  # Jobs run as triggering user
+
+  apiToken:
+    creationOfLegacyTokenEnabled: false  # Disables legacy tokens
+    tokenGenerationOnCreationEnabled: false
+    usageStatisticsEnabled: true
+    revocationOfLegacyTokenEnabled: true
+
+  globalJobDslSecurityConfiguration:
+    useScriptSecurity: true  # Protects DSL jobs
+
+# ⚙️ Unclassified Plugin Configuration
+unclassified:
+  location:
+    url: "http://localhost:8080/jenkins"  # Jenkins URL (used in links, webhooks, etc.)
+
+  # 💾 Thin Backup Plugin: Schedule and retain full/diff backups
+  thinBackupConfig:
+    backupDirectory: "/var/jenkins_backup"
+    fullBackupSchedule: "0 2 * * 0"  # Sunday 2 AM
+    diffBackupSchedule: "0 2 * * 1-6"  # Mon–Sat 2 AM
+    backupBuildResults: true
+    backupBuildArchive: false
+    backupPluginArchives: true
+    backupUserContents: true
+    cleanupDiff: "${BACKUP_CLEANUP_DAYS}"  # e.g., 15 for dev, 90 for prod
+    cleanupFull: "${BACKUP_CLEANUP_DAYS}"
+    excludedFilesRegex: ""
+
+  # 📦 Artifactory Plugin Configuration
+  artifactoryBuilder:
+    artifactoryServers:
+      - name: "Artifactory"
+        serverId: "artifactory"
+        url: "${ARTIFACTORY_URL}"
+        deployerCredentialsConfig:
+          credentialsId: "artifactory-credentials"
+        resolverCredentialsConfig:
+          credentialsId: "artifactory-credentials"
+
+  # 📊 Prometheus Plugin (Monitoring)
+  prometheusConfiguration:
+    defaultNamespace: "jenkins"
+    jobAttributeName: "jenkins_job"
+    path: "/prometheus"
+    useAuthenticatedEndpoint: false
+
+  # 📈 Datadog Plugin (Optional)
+  datadog:
+    collectBuildTraces: true
+    emitSecurity: true
+    enableApiKeyHashing: true
+    hostname: "${JENKINS_HOSTNAME}"
+    targetApiURL: "https://api.datadoghq.com/api/"
+    targetApiKey: "${DATADOG_API_KEY}"
+    targetLogIntakeURL: "https://http-intake.logs.datadoghq.com"
+
+# 🔧 Tool Locations
+tool:
+  git:
+    installations:
+      - name: "Default"
+        home: "git"
+
+  maven:
+    installations:
+      - name: "Maven 3"
+        home: "/usr/share/maven"
+
+  jdk:
+    installations:
+      - name: "JDK 17"
+        home: "/opt/java/openjdk"
+
+  dockerTool:
+    installations:
+      - name: "Default"
+        home: "/usr/bin"
+
+# 🔑 Secure Credentials (Injected via ENV or Vault-injected ENV)
+credentials:
+  system:
+    domainCredentials:
+      - domain:
+          name: "global"
+          description: "Global credentials"
+        credentials:
+          - basicSSHUserPrivateKey:
+              scope: GLOBAL
+              id: "github-ssh-key"
+              username: "git"
+              description: "GitHub SSH Key"
+              privateKeySource:
+                directEntry:
+                  privateKey: "${GITHUB_SSH_PRIVATE_KEY}"
+
+          - basicSSHUserPrivateKey:
+              scope: GLOBAL
+              id: "ec2-ssh-key"
+              username: "ubuntu"
+              description: "EC2 SSH Key"
+              privateKeySource:
+                directEntry:
+                  privateKey: "${EC2_SSH_PRIVATE_KEY}"
+
+          - usernamePassword:
+              scope: GLOBAL
+              id: "dockerhub-credentials"
+              username: "${DOCKERHUB_USERNAME}"
+              password: "${DOCKERHUB_PASSWORD}"
+              description: "Docker Hub Credentials"
+
+          - usernamePassword:
+              scope: GLOBAL
+              id: "artifactory-credentials"
+              username: "${ARTIFACTORY_USERNAME}"
+              password: "${ARTIFACTORY_PASSWORD}"
+              description: "Artifactory Credentials"

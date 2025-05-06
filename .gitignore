@@ -1,0 +1,15 @@
+# Ignore build output and sensitive files
+bin/
+obj/
+publish/
+.env*
+*.bak
+*.pem
+.vscode/
+.idea/
+*.log
+*.tmp
+vault/
+setup-ssh.sh
+docker-compose
+docker-compose.cd
