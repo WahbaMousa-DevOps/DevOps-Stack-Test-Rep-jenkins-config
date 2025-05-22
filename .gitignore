@@ -11,5 +11,5 @@ publish/
 *.tmp
 vault/
 setup-ssh.sh
-docker-compose
+*docker-compose
 docker-compose.cd
