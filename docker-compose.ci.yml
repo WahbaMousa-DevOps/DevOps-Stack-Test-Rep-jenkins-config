@@ -28,10 +28,17 @@ services:
       - JENKINS_EXECUTORS=1 # How many executors (parallel jobs) run on master (0 in prod). How many builds Jenkins master itself can run. Prod `0` → Master only manages agents. Dev `1+` → Allows building on master (quick test/dev). In real CD (on Kubernetes), Jenkins master should NEVER build anything — all builds should happen on agents.
       - JENKINS_SIGNUP=true # Enable/disable user sign-up
       - BACKUP_CLEANUP_DAYS=15 # Used in JCasC for ThinBackup retention logic
-    volumes:
-      - jenkins_home:/var/jenkins_home # jenkins_home is a named Docker volume used to persist all Jenkins state (jobs, plugins, builds, config, credentials, etc.). → Persistent Jenkins data (jobs, plugins, config)
-      - ./jcasc:/var/jenkins_home/casc_configs # Bind mount → Mounts your JCasC config from repo into container
-      - /var/run/docker.sock:/var/run/docker.sock # Bind mount → Gives Jenkins access to host Docker (build containers). Security-sensitive file: must be mounted only by CI agents
+    volumes: # the order in the list doesn’t matter in Compose.
+      - jenkins_home:/var/jenkins_home 
+      # jenkins_home is a named Docker volume used to persist all Jenkins state (jobs, plugins, builds, config, credentials, etc.). → Persistent Jenkins data (jobs, plugins, config)
+      - ./jcasc:/var/jenkins_home/casc_configs 
+      # Jenkins reads JCasC YAML files from that mounted path on startup. Bind mount → Mounts your JCasC config from repo into container
+      # Why use a bind mount for jcasc/? COPY jcasc/ ... in Dockerfile ❌ Not ideal	Youd need to rebuild the Jenkins image every time JCasC config changes
+      # but ./jcasc:/... bind mount	✅ Recommended	You can edit configs and restart Jenkins without rebuilding images
+      - /var/run/docker.sock:/var/run/docker.sock 
+      # Bind mount → Gives Jenkins access to host Docker (build containers). Security-sensitive file: must be mounted only by CI agents
+    # It gives the container (Jenkins or agents) access to the host's Docker engine, allowing it to run: docker build, docker run, docker push.
+    # This is required for CI jobs that: Build images, Run Docker CLI commands inside Jenkins pipelines. Is it dangerous to expose /var/run/docker.sock? If you mount the socket into a container, it can control the host Docker engine — it’s like root access. That’s why we say: “Must be mounted only by CI agents” — not by runtime apps in production like your deployed microservices. In Compose CI, it’s acceptable — this is a controlled build environment, not open to the public.
     networks:
       - jenkins-net
     restart: unless-stopped
